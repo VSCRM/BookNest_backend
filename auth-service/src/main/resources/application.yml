@@ -1,0 +1,96 @@
+server:
+  port: ${SERVER_PORT:9000}
+  # Render (and every similar PaaS) terminates TLS at its own proxy and
+  # forwards plain HTTP to this container. Without this, Spring thinks
+  # every request is http:// — breaking Google OAuth2's redirect_uri
+  # generation (built as http://..., which won't match the https://...
+  # URI actually registered with Google) and any other scheme-sensitive
+  # logic. Harmless locally: there's no proxy, so no X-Forwarded-* headers
+  # ever arrive, and this setting simply does nothing.
+  forward-headers-strategy: framework
+
+spring:
+  application:
+    name: booknest-auth-service
+
+  # PostgreSQL, fully configurable via env vars (falls back to sane local
+  # defaults if unset — the same defaults a fresh `docker run postgres`
+  # gives you, see docker-compose.yml in this directory).
+  datasource:
+    url: jdbc:postgresql://${DB_HOST:localhost}:${DB_PORT:5433}/${DB_NAME:booknest_auth}?sslmode=${DB_SSLMODE:require}
+    username: ${DB_USERNAME:postgres}
+    password: ${DB_PASSWORD:admin1}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            # Spring Boot's OAuth2ClientProperties#validateRegistration rejects a
+            # blank client-id/client-secret with "Client id must not be empty."
+            # and refuses to start the *entire* application context — not just
+            # disable Google login. So this needs SOME non-empty fallback for
+            # developers who only care about email/password login and haven't
+            # set up a real Google OAuth app — but a real, working client-id
+            # and secret must never be that fallback: this file is committed
+            # to git, so a real default here is a permanently leaked secret,
+            # not a convenience. These placeholders are obviously fake and
+            # non-functional (Google will just reject them) — a
+            # missing/placeholder value only makes the Google button itself
+            # fail (handled by OAuth2LoginFailureHandler) instead of crashing
+            # startup. Set the real values via GOOGLE_CLIENT_ID/
+            # GOOGLE_CLIENT_SECRET in .env — never here.
+            client-id: ${GOOGLE_CLIENT_ID:REPLACE_WITH_REAL_GOOGLE_CLIENT_ID.apps.googleusercontent.com}
+            client-secret: ${GOOGLE_CLIENT_SECRET:REPLACE_WITH_REAL_GOOGLE_CLIENT_SECRET}
+            scope: profile, email
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://oauth2.googleapis.com/token
+            user-info-uri: https://openidconnect.googleapis.com/v1/userinfo
+            user-name-attribute: sub
+
+  kafka:
+    bootstrap-servers: ${KAFKA_BOOTSTRAP_SERVERS:kafka:9092}
+    producer:
+      properties:
+        # KafkaTemplate#send() looks async, but the very first call on a
+        # given topic blocks the calling thread until it fetches partition
+        # metadata from the broker — for up to max.block.ms (60s default!).
+        # AuthEventPublisher is invoked synchronously from AuthController
+        # before the HTTP response is built, so with no local broker running
+        # that 60s block was stalling every register/login request well past
+        # any reasonable client-side timeout. Fail fast instead: auth must
+        # keep working even when Kafka is down (see AuthEventPublisher).
+        max.block.ms: 2000
+
+booknest:
+  jwt:
+    # 256-bit (32+ char) shared secret. MUST match on every service that
+    # verifies this service's tokens. Never use the placeholder in production.
+    secret: ${JWT_SECRET:change-me-to-a-real-32-byte-minimum-secret-value}
+    access-token-minutes: ${JWT_ACCESS_MINUTES:15}
+    refresh-token-days: ${JWT_REFRESH_DAYS:7}
+  app:
+    frontend-url: ${FRONTEND_URL:https://vscrm.github.io/BookNest}
+    # Comma-separated list of origins allowed to send credentialed requests
+    # to this service. Override with real HTTPS origins in every non-local
+    # deployment — never widen this to "*" while allow-credentials is true.
+    cors-allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5174,http://127.0.0.1:5174,http://localhost:5173,http://127.0.0.1:5173,http://localhost:8080,http://127.0.0.1:8080,https://vscrm.github.io}
+    # Must be true in any deployment served over HTTPS. Only false to allow
+    # cookies to work over plain HTTP during local development.
+    cookie-secure: ${COOKIE_SECURE:true}
+    # See AppProperties' Javadoc — Lax locally, None once frontend and this
+    # service are on genuinely different domains (e.g. GitHub Pages + Render).
+    cookie-same-site: ${COOKIE_SAME_SITE:None}
+
+# Log levels are controlled by log4j2.xml, not here, to keep a single
+# source of truth for logging configuration.

@@ -1,0 +1,40 @@
+# NOTE: superseded by the root-level ../docker-compose.yml, which runs this
+# same Postgres PLUS auth-service and Rails together in one container (to
+# eliminate clock skew between the two — see combined/entrypoint.sh). Use
+# this file only if you specifically want auth-service running standalone
+# again; don't run both compose files at once.
+#
+# Local PostgreSQL for auth-service only. This does NOT run auth-service
+# itself (run that with your IDE / `mvn spring-boot:run` / `java -jar ...` —
+# see .env / .env.example) and is separate from ../BookNest/docker-compose.yml,
+# which only runs the Ruby backend.
+#
+# Start:   docker compose up -d
+# Stop:    docker compose down            (add -v to also wipe the data volume)
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: booknest_auth_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-booknest_auth}
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-admin1}
+      TZ: Europe/Kyiv
+    ports:
+      - "${DB_PORT:-5433}:5432"
+    volumes:
+      - auth_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-booknest_auth}",
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  auth_postgres_data:

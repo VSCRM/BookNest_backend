@@ -1,0 +1,40 @@
+source "https://rubygems.org"
+
+ruby "3.2.11"
+
+gem "rails", "~> 7.1.0"
+gem "sprockets-rails"
+gem "sqlite3", "~> 1.4"
+
+# Production database driver. Locally/in Docker Compose (RAILS_ENV=development)
+# config/database.yml still uses sqlite3 above — this is only reached in
+# production, when deployed against a real Postgres instance (e.g. Neon).
+gem "pg", "~> 1.5"
+gem "puma", ">= 5.0"
+gem "importmap-rails"
+gem "turbo-rails"
+gem "stimulus-rails"
+gem "jbuilder"
+gem "bcrypt", "~> 3.1.7"
+
+# Verifies JWTs issued by the Spring Boot auth-service (HS256, shared
+# secret) so Rails can identify the current user without owning any
+# credentials itself.
+gem "jwt", "~> 2.9"
+
+# Rails 7.1.6 усередині ще викликає JSON.generate зі старим keyword-API
+# (quirks_mode:), якого прибрали в json 3.x — без цього пінінгу свіжий
+# `bundle install` підтягує json 3.0+ і застосунок падає на першому ж
+# запиті (ArgumentError: unknown keyword: quirks_mode) під час запису
+# cookie-сесії.
+gem "json", "~> 2.7"
+gem "bootsnap", require: false
+gem "rack-cors"
+
+# Static analysis backing frontend-playground's "Lint" panel
+# (Api::V1::PlaygroundController#lint shells out to `rubocop --format json`).
+gem "rubocop", require: false
+
+group :development, :test do
+  gem "debug", platforms: %i[ mri windows ]
+end

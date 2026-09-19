@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="uk">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>BookNest ✨</title>
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <style>
+      /* Full-screen easter-egg page: no header/footer from the main site. */
+      html, body { height: 100%; margin: 0; overflow: hidden; }
+    </style>
+  </head>
+  <body>
+    <%= yield %>
+  </body>
+</html>

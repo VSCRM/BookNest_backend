@@ -1,0 +1,42 @@
+server:
+  port: 0
+
+spring:
+  application:
+    name: booknest-auth-service-test
+
+  datasource:
+    url: jdbc:h2:mem:booknest-auth-test;DB_CLOSE_DELAY=-1
+    driver-class-name: org.h2.Driver
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
+    open-in-view: false
+
+  security:
+    oauth2:
+      client:
+        registration:
+          google:
+            client-id: test-google-client-id
+            client-secret: test-google-client-secret
+            scope: profile, email
+        provider:
+          google:
+            authorization-uri: https://accounts.google.com/o/oauth2/v2/auth
+            token-uri: https://oauth2.googleapis.com/token
+            user-info-uri: https://openidconnect.googleapis.com/v1/userinfo
+            user-name-attribute: sub
+
+  kafka:
+    bootstrap-servers: localhost:9092
+
+booknest:
+  jwt:
+    secret: test-only-jwt-signing-secret-at-least-32-bytes-long-0123456789
+    access-token-minutes: 15
+    refresh-token-days: 7
+  app:
+    frontend-url: http://localhost:5174
+    cors-allowed-origins: http://localhost:5174,http://127.0.0.1:5174
+    cookie-secure: false

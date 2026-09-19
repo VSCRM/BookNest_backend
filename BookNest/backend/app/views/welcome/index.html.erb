@@ -1,0 +1,184 @@
+<div id="welcome-stage">
+  <canvas id="welcome-canvas"></canvas>
+
+  <div id="welcome-content">
+    <h1 id="welcome-title" aria-label="Ласкаво просимо до BookNest">
+      <% "Ласкаво просимо до BookNest".each_char.with_index do |ch, i| %>
+        <span style="--i: <%= i %>"><%= ch == " " ? "&nbsp;".html_safe : ch %></span>
+      <% end %>
+    </h1>
+    <p id="welcome-sub">Рухай мишкою. Клікай. Книги люблять увагу. 📖✨</p>
+    <p id="welcome-hint">(це маленький секрет — ти знайшов його сам)</p>
+  </div>
+</div>
+
+<style>
+  #welcome-stage {
+    position: fixed;
+    inset: 0;
+    background: radial-gradient(ellipse at top, #241b33 0%, #0d0a16 70%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-family: "Georgia", "Times New Roman", serif;
+  }
+
+  #welcome-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  #welcome-content {
+    position: relative;
+    z-index: 2;
+    text-align: center;
+    color: #f6ecd9;
+    padding: 0 24px;
+    pointer-events: none;
+  }
+
+  #welcome-title {
+    margin: 0 0 18px;
+    font-size: clamp(28px, 5vw, 56px);
+    letter-spacing: 1px;
+    text-shadow: 0 0 24px rgba(255, 214, 140, 0.35);
+  }
+
+  #welcome-title span {
+    display: inline-block;
+    animation: welcome-bounce 2.4s ease-in-out infinite;
+    animation-delay: calc(var(--i) * 0.05s);
+  }
+
+  @keyframes welcome-bounce {
+    0%, 100% { transform: translateY(0); }
+    50% { transform: translateY(-10px); }
+  }
+
+  #welcome-sub {
+    margin: 0 0 6px;
+    font-size: clamp(15px, 2vw, 20px);
+    color: #d8c8ae;
+  }
+
+  #welcome-hint {
+    margin: 0;
+    font-size: 13px;
+    color: #8d7f9e;
+    font-style: italic;
+  }
+</style>
+
+<script>
+  (() => {
+    const canvas = document.getElementById("welcome-canvas");
+    const ctx = canvas.getContext("2d");
+    const BOOK_EMOJI = ["📖", "📚", "✨", "⭐", "🔖"];
+
+    let width, height;
+    function resize() {
+      width = canvas.width = window.innerWidth;
+      height = canvas.height = window.innerHeight;
+    }
+    window.addEventListener("resize", resize);
+    resize();
+
+    // Ambient drifting books/sparkles, gently pulled toward the mouse.
+    const mouse = {x: width / 2, y: height / 2};
+    window.addEventListener("mousemove", (e) => {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+    });
+
+    class Particle {
+      constructor(burst) {
+        this.reset(burst);
+      }
+
+      reset(burst) {
+        this.emoji = BOOK_EMOJI[Math.floor(Math.random() * BOOK_EMOJI.length)];
+        this.size = 16 + Math.random() * 22;
+        if (burst) {
+          this.x = mouse.x;
+          this.y = mouse.y;
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 2 + Math.random() * 5;
+          this.vx = Math.cos(angle) * speed;
+          this.vy = Math.sin(angle) * speed;
+          this.life = 70 + Math.random() * 30;
+        } else {
+          this.x = Math.random() * width;
+          this.y = Math.random() * height;
+          this.vx = (Math.random() - 0.5) * 0.4;
+          this.vy = (Math.random() - 0.5) * 0.4;
+          this.life = Infinity;
+        }
+        this.age = 0;
+        this.spin = (Math.random() - 0.5) * 0.06;
+        this.angle = Math.random() * Math.PI * 2;
+      }
+
+      update() {
+        // Gentle pull toward the cursor for the ambient (non-burst) particles.
+        if (this.life === Infinity) {
+          const dx = mouse.x - this.x;
+          const dy = mouse.y - this.y;
+          const dist = Math.hypot(dx, dy) || 1;
+          this.vx += (dx / dist) * 0.01;
+          this.vy += (dy / dist) * 0.01;
+          this.vx *= 0.98;
+          this.vy *= 0.98;
+        } else {
+          this.vy += 0.05; // gravity for burst particles
+        }
+
+        this.x += this.vx;
+        this.y += this.vy;
+        this.angle += this.spin;
+        this.age += 1;
+
+        if (this.life !== Infinity && this.age > this.life) return false;
+        if (this.life === Infinity) {
+          if (this.x < -20) this.x = width + 20;
+          if (this.x > width + 20) this.x = -20;
+          if (this.y < -20) this.y = height + 20;
+          if (this.y > height + 20) this.y = -20;
+        }
+        return true;
+      }
+
+      draw() {
+        const fade = this.life === Infinity ? 1 : Math.max(0, 1 - this.age / this.life);
+        ctx.save();
+        ctx.globalAlpha = fade;
+        ctx.translate(this.x, this.y);
+        ctx.rotate(this.angle);
+        ctx.font = `${this.size}px serif`;
+        ctx.textAlign = "center";
+        ctx.textBaseline = "middle";
+        ctx.fillText(this.emoji, 0, 0);
+        ctx.restore();
+      }
+    }
+
+    let particles = [];
+    for (let i = 0; i < 28; i++) particles.push(new Particle(false));
+
+    document.getElementById("welcome-stage").addEventListener("click", (e) => {
+      mouse.x = e.clientX;
+      mouse.y = e.clientY;
+      for (let i = 0; i < 18; i++) particles.push(new Particle(true));
+    });
+
+    function loop() {
+      ctx.clearRect(0, 0, width, height);
+      particles = particles.filter((p) => p.update());
+      particles.forEach((p) => p.draw());
+      requestAnimationFrame(loop);
+    }
+    loop();
+  })();
+</script>

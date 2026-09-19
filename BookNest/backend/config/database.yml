@@ -1,0 +1,37 @@
+default: &default
+  pool: <%= ENV.fetch("RAILS_MAX_THREADS") { 5 } %>
+  timeout: 5000
+
+development:
+  <<: *default
+  adapter: sqlite3
+  database: storage/development.sqlite3
+
+test:
+  <<: *default
+  adapter: sqlite3
+  database: storage/test.sqlite3
+
+# Production talks to a real Postgres instance (e.g. Neon's free tier —
+# see https://neon.tech). Uses the SAME env var names as auth-service's
+# own DB_* config for host/port/credentials (one Neon project, one owner,
+# covers both) — but RAILS_DB_NAME is its own variable, deliberately NOT
+# named DB_NAME. auth-service and this app MUST NOT share one database:
+# they both have a "users" table with completely different columns
+# (password_digest here vs password_hash/provider/reset_code there) —
+# Hibernate's schema migration would try to bolt its columns onto this
+# table. Locally, docker-compose's single "backend" container runs both
+# processes from ONE shared environment block, so a single "DB_NAME"
+# name would silently hand Rails the SAME database auth-service uses.
+# `sslmode: require` is mandatory for Neon (and most managed Postgres) —
+# without it the connection is rejected outright.
+production:
+  <<: *default
+  adapter: postgresql
+  encoding: unicode
+  host: <%= ENV.fetch("DB_HOST") %>
+  port: <%= ENV.fetch("DB_PORT", 5432) %>
+  database: <%= ENV.fetch("RAILS_DB_NAME") %>
+  username: <%= ENV.fetch("DB_USERNAME") %>
+  password: <%= ENV.fetch("DB_PASSWORD") %>
+  sslmode: <%= ENV.fetch("DB_SSLMODE", "require") %>

@@ -1,0 +1,47 @@
+# ── General, repo-wide rules ──────────────────────────────────────────
+# Language/framework-specific rules live in auth-service/.gitignore and
+# BookNest/backend/.gitignore; this file covers everything shared across
+# the whole backend monorepo (env files, Docker, IDE, OS clutter, etc.).
+
+### Environment & secrets ###
+
+.env
+!.env.example
+*.pem
+*.key
+!**/src/**/*.key
+
+### Docker ###
+docker-compose.override.yml
+.docker/
+*.pid
+
+### Logs (any service, any location) ###
+*.log
+*.log.gz
+logs/
+
+### IDE ###
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+
+### OS clutter ###
+.DS_Store
+Thumbs.db
+desktop.ini
+
+### Editor backups/swap files ###
+*~
+*.swp
+*.swo
+
+### Archives accidentally left in the repo ###
+*.zip
+*.tar.gz
+*.rar
+
+### Combined image build context leftovers ###
+combined/*.log

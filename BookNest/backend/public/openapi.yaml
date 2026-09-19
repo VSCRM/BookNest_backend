@@ -1,0 +1,821 @@
+openapi: 3.0.3
+info:
+  title: BookNest API
+  description: >
+    Documentation for the two BookNest backends. The Rails application
+    (BookNest/backend, :8080) is the public JSON API for the catalog, cart,
+    orders and the Ruby playground used by the React storefront
+    (frontend-shop) — plus a separate Spring Boot auth-service (:9000) that
+    handles registration/login/Google OAuth and issues JWTs. The Rails
+    backend does not store its own credentials; it only verifies the
+    signature of the JWT issued by auth-service, carried in the
+    `booknest_jwt` cookie.
+  version: "2.0.0"
+servers:
+  - url: http://localhost:8080
+    description: Rails backend (BookNest JSON API + docker compose / rails s)
+  - url: http://localhost:9000
+    description: Spring Boot auth-service (docker compose)
+tags:
+  - name: Books (JSON API)
+    description: Public catalog JSON API — used by the React storefront (frontend-shop).
+  - name: Cart (JSON API)
+    description: The buyer's cart for the React storefront. Also works for a guest (not logged in).
+  - name: Orders (JSON API)
+    description: Checkout and order history for the React storefront.
+  - name: Saved Books (JSON API)
+    description: 'The "saved books" (wishlist) list for the React storefront.'
+  - name: Admin (JSON API)
+    description: >-
+      Book catalog management for the React storefront's admin panel (the
+      "Add book" tab, visible only when user.role === 'admin').
+  - name: Playground (JSON API)
+    description: >-
+      Execution and linting of Ruby snippets for frontend-playground (labs
+      5-7: strings/arithmetic, arrays, classes/OOP). A public endpoint; the
+      code runs in a sandbox (a separate process with CPU/memory/time limits).
+  - name: Welcome
+    description: A hidden interactive welcome page (not linked from any menu).
+  - name: Auth (auth-service)
+    description: >-
+      Registration, login, Google OAuth, password recovery and the user
+      profile. A separate Spring Boot application (port 9000); it is the one
+      that issues the JWT, which the Rails backend only verifies.
+  - name: Docs
+    description: Swagger UI for this specification.
+
+paths:
+  # ── JSON API: Books ──────────────────────────────────────────────
+  /api/v1/books:
+    get:
+      summary: Get the list of catalog books
+      tags: [Books (JSON API)]
+      parameters:
+        - in: query
+          name: q
+          schema: {type: string}
+          description: Search query by title or author
+        - in: query
+          name: genre
+          schema: {type: string}
+          description: Filter by genre
+        - in: query
+          name: sort
+          schema: {type: string, enum: [asc, desc]}
+          description: Sort by price
+        - in: query
+          name: locale
+          schema: {type: string, enum: [uk, en]}
+          description: >-
+            Localization of title/author/genre/description. Defaults to
+            Ukrainian if not specified. For en, returns the English
+            translation if it is filled in for the book, otherwise falls
+            back to the base (Ukrainian) value.
+      responses:
+        "200":
+          description: List of books
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Book"}
+
+  /api/v1/books/{id}:
+    get:
+      summary: Get a single book by id
+      tags: [Books (JSON API)]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer}
+        - in: query
+          name: locale
+          schema: {type: string, enum: [uk, en]}
+          description: Same as in GET /api/v1/books.
+      responses:
+        "200":
+          description: Book
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Book"}
+        "404":
+          description: Not found
+
+  # ── JSON API: Cart ────────────────────────────────────────────────
+  /api/v1/cart:
+    get:
+      summary: View the current cart
+      description: The cart is tied to the session/JWT shadow user; also works without logging in (guest).
+      tags: [Cart (JSON API)]
+      responses:
+        "200":
+          description: Cart
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Cart"}
+
+  /api/v1/cart/items:
+    post:
+      summary: Add a book to the cart
+      tags: [Cart (JSON API)]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                book_id: {type: integer}
+                quantity: {type: integer, default: 1}
+              required: [book_id]
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Cart"}
+        "422":
+          description: Not enough stock available for the requested quantity
+
+  /api/v1/cart/items/{book_id}:
+    patch:
+      summary: Change the quantity of a cart item
+      tags: [Cart (JSON API)]
+      parameters:
+        - in: path
+          name: book_id
+          required: true
+          schema: {type: integer}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                quantity: {type: integer}
+              required: [quantity]
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Cart"}
+    delete:
+      summary: Remove an item from the cart
+      tags: [Cart (JSON API)]
+      parameters:
+        - in: path
+          name: book_id
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: Updated cart
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Cart"}
+
+  # ── JSON API: Orders ──────────────────────────────────────────────
+  /api/v1/orders:
+    get:
+      summary: Order history for the current user
+      tags: [Orders (JSON API)]
+      security: [{jwtCookieAuth: []}]
+      responses:
+        "200":
+          description: List of orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/OrderSummary"}
+        "401":
+          description: 'Not authenticated: {"error":"not_authenticated"}'
+    post:
+      summary: Place an order (checkout the current cart)
+      description: Does not require login — a guest can also place an order.
+      tags: [Orders (JSON API)]
+      responses:
+        "201":
+          description: Created order
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OrderDetail"}
+        "422":
+          description: 'Empty cart: {"error":"cart_empty"}'
+
+  /api/v1/orders/{id}:
+    get:
+      summary: View a single order
+      tags: [Orders (JSON API)]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer}
+      responses:
+        "200":
+          description: Order
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/OrderDetail"}
+        "404":
+          description: Not found
+
+  # ── JSON API: Saved Books ─────────────────────────────────────────
+  /api/v1/users/{username}/saved:
+    get:
+      summary: List of a user's saved books (wishlist)
+      tags: [Saved Books (JSON API)]
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema: {type: string, format: email}
+      responses:
+        "200":
+          description: "List of books (an empty array if nothing has been saved yet)"
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/Book"}
+    post:
+      summary: Add a book to saved
+      tags: [Saved Books (JSON API)]
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema: {type: string, format: email}
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: {type: integer, description: "book id"}
+      responses:
+        "201":
+          description: Added book
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/Book"}
+        "404":
+          description: Book not found
+
+  /api/v1/users/{username}/saved/{book_id}:
+    delete:
+      summary: Remove a book from saved
+      tags: [Saved Books (JSON API)]
+      parameters:
+        - in: path
+          name: username
+          required: true
+          schema: {type: string, format: email}
+        - in: path
+          name: book_id
+          required: true
+          schema: {type: integer}
+      responses:
+        "204":
+          description: Deleted
+
+  # ── JSON API: Admin ───────────────────────────────────────────────
+  /api/v1/admin/books:
+    get:
+      summary: Full catalog (both languages) for the admin panel table
+      tags: [Admin (JSON API)]
+      security: [{jwtCookieAuth: []}]
+      responses:
+        "200":
+          description: List of books with all fields (including English ones)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: {$ref: "#/components/schemas/AdminBook"}
+        "401":
+          description: 'Not authenticated: {"error":"not_authenticated"}'
+        "403":
+          description: 'Not an admin: {"error":"not_authorized"}'
+    post:
+      summary: Add a book
+      description: >-
+        Accepts multipart/form-data (to optionally upload a cover image file
+        `book[cover_image]`) or plain JSON with `cover_image_url`. The
+        `*_en` fields are required — a book cannot be saved without a
+        translation.
+      tags: [Admin (JSON API)]
+      security: [{jwtCookieAuth: []}]
+      requestBody:
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/AdminBookForm"}
+          application/json:
+            schema: {$ref: "#/components/schemas/AdminBookForm"}
+      responses:
+        "201":
+          description: Created book
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminBook"}
+        "422":
+          description: 'Validation errors (e.g. missing translation): {"errors": {...}}'
+        "401":
+          description: Not authenticated
+        "403":
+          description: Not an admin
+
+  /api/v1/admin/books/{id}:
+    patch:
+      summary: Update a book
+      tags: [Admin (JSON API)]
+      security: [{jwtCookieAuth: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer}
+      requestBody:
+        content:
+          multipart/form-data:
+            schema: {$ref: "#/components/schemas/AdminBookForm"}
+          application/json:
+            schema: {$ref: "#/components/schemas/AdminBookForm"}
+      responses:
+        "200":
+          description: Updated book
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AdminBook"}
+        "422":
+          description: Validation errors
+    delete:
+      summary: Delete a book
+      tags: [Admin (JSON API)]
+      security: [{jwtCookieAuth: []}]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: {type: integer}
+      responses:
+        "204":
+          description: Deleted
+        "422":
+          description: 'The book is already referenced in orders: {"error":"book_has_orders"}'
+
+  # ── JSON API: Playground ─────────────────────────────────────────
+  /api/v1/playground/execute:
+    post:
+      summary: Execute Ruby code in a sandbox
+      description: >-
+        A public endpoint (no login required). The code runs in a separate
+        subprocess with its own process group, CPU/memory limits, and a
+        5-second wall-clock timeout.
+      tags: [Playground (JSON API)]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  {type: string, description: "Ruby code (up to 20000 bytes)"}
+                stdin:
+                  {
+                    type: string,
+                    description: "Input data for the script (up to 4000 bytes)",
+                  }
+              required: [source]
+      responses:
+        "200":
+          description: Execution result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlaygroundExecuteResult"}
+
+  /api/v1/playground/lint:
+    post:
+      summary: Check Ruby code with RuboCop
+      tags: [Playground (JSON API)]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source:
+                  {type: string, description: "Ruby code (up to 20000 bytes)"}
+              required: [source]
+      responses:
+        "200":
+          description: Linting result
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/PlaygroundLintResult"}
+
+  # ── Welcome ───────────────────────────────────────────────────────
+  /welcome:
+    get:
+      summary: Hidden welcome page
+      tags: [Welcome]
+      responses:
+        "200": {description: HTML page, content: {text/html: {}}}
+
+  # ── Auth (auth-service, port 9000) ─────────────────────────────────
+  /api/auth/register:
+    post:
+      summary: Register a new user
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/RegisterRequest"}
+      responses:
+        "200":
+          description: >-
+            Always 200. On success — {success:true, user}; on failure —
+            {success:false, message:"email_already_registered"}. Sets the
+            booknest_jwt/booknest_refresh cookies.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+
+  /api/auth/login:
+    post:
+      summary: Log in (email/password)
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/LoginRequest"}
+      responses:
+        "200":
+          description: >-
+            Always 200. On failure — {success:false, message:"invalid_credentials"}.
+            Sets the booknest_jwt/booknest_refresh cookies.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+
+  /api/auth/refresh:
+    post:
+      summary: Refresh the access token using the refresh cookie
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      description: >-
+        No request body needed — the refresh token is taken from the
+        booknest_refresh cookie (path /api/auth/refresh).
+      responses:
+        "200":
+          description: >-
+            {success:false, message} with one of:
+            "no_refresh_token" | "invalid_refresh_token" | "account_not_found"
+            on failure, otherwise {success:true, user}.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+
+  /api/auth/me:
+    get:
+      summary: Current user
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      security: [{jwtCookieAuth: []}]
+      responses:
+        "200":
+          description: >-
+            {success:false, message:"not_authenticated"|"account_not_found"}
+            on failure, otherwise {success:true, user}.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+    put:
+      summary: Update the name and/or password
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      security: [{jwtCookieAuth: []}]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/UpdateProfileRequest"}
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+
+  /api/auth/forgot-password:
+    post:
+      summary: Request a password recovery code
+      description: >-
+        SMTP is not configured (local/educational deployment) — the code is
+        returned directly in the response (`devCode`); no emails are sent.
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ForgotPasswordRequest"}
+      responses:
+        "200":
+          description: >-
+            {success:false, message:"account_not_found"} on failure,
+            otherwise {success:true, email, sent:false, devCode}.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/ForgotPasswordResponse"}
+
+  /api/auth/reset-password:
+    post:
+      summary: Reset the password using a code
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: "#/components/schemas/ResetPasswordRequest"}
+      responses:
+        "200":
+          description: >-
+            {success:false, message:"invalid_or_expired_code"} on failure,
+            otherwise {success:true, user}. Sets the
+            booknest_jwt/booknest_refresh cookies.
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+
+  /api/auth/logout:
+    post:
+      summary: Log out
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      description: Works even without a valid access token. Clears both auth cookies.
+      responses:
+        "200":
+          description: '{"success":true,"user":null,"message":null}'
+          content:
+            application/json:
+              schema: {$ref: "#/components/schemas/AuthResponse"}
+
+  /oauth2/authorization/google:
+    get:
+      summary: Start Google OAuth login
+      description: >-
+        The standard Spring Security oauth2Login endpoint. Redirects to
+        Google; after consent, returns to the application; on success,
+        OAuth2LoginSuccessHandler sets the booknest_jwt/booknest_refresh
+        cookies and redirects to the frontend; on failure —
+        OAuth2LoginFailureHandler.
+      tags: [Auth (auth-service)]
+      servers:
+        - url: http://localhost:9000
+      responses:
+        "302": {description: Redirect to the Google consent page}
+
+  # ── Docs ──────────────────────────────────────────────────────────
+  /api:
+    get:
+      summary: Redirect to Swagger UI for this specification
+      tags: [Docs]
+      responses:
+        "302": {description: Redirect to /docs/index.html}
+
+components:
+  securitySchemes:
+    jwtCookieAuth:
+      type: apiKey
+      in: cookie
+      name: booknest_jwt
+      description: >-
+        A JWT (HS256) issued by the Spring Boot auth-service after
+        login/registration/Google OAuth. Rails only verifies the signature
+        and the `role` field — it does not store its own credentials. The
+        same cookie is also checked by auth-service itself
+        (`/api/auth/me`, `PUT /api/auth/me`).
+  schemas:
+    Book:
+      type: object
+      properties:
+        id: {type: integer}
+        title: {type: string}
+        author: {type: string}
+        price: {type: number, format: float}
+        genre: {type: string}
+        stock: {type: integer}
+        published_year: {type: integer}
+        pages: {type: integer}
+        description: {type: string}
+        cover_image_url: {type: string, nullable: true}
+    AdminBook:
+      allOf:
+        - $ref: "#/components/schemas/Book"
+        - type: object
+          properties:
+            title_en: {type: string}
+            author_en: {type: string}
+            genre_en: {type: string}
+            description_en: {type: string}
+    AdminBookForm:
+      type: object
+      description: Fields are sent as `book[field]`; the `*_en` ones are required.
+      properties:
+        book:
+          type: object
+          properties:
+            title: {type: string}
+            title_en: {type: string}
+            author: {type: string}
+            author_en: {type: string}
+            price: {type: number, format: float}
+            description: {type: string}
+            description_en: {type: string}
+            genre: {type: string}
+            genre_en: {type: string}
+            pages: {type: integer}
+            published_year: {type: integer}
+            stock: {type: integer}
+            cover_image:
+              {
+                type: string,
+                format: binary,
+                description: "Cover image file (optional)",
+              }
+            cover_image_url:
+              {
+                type: string,
+                description: "Alternative to the file — a direct link",
+              }
+            remove_cover_image:
+              {
+                type: boolean,
+                description: "Remove the current cover without adding a new one",
+              }
+    Cart:
+      type: object
+      properties:
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              book_id: {type: integer}
+              title: {type: string}
+              author: {type: string}
+              price: {type: number, format: float}
+              cover_image_url: {type: string, nullable: true}
+              stock: {type: integer}
+              quantity: {type: integer}
+              subtotal: {type: number, format: float}
+        total_price: {type: number, format: float}
+        total_items: {type: integer}
+    OrderSummary:
+      type: object
+      properties:
+        id: {type: integer}
+        number: {type: string}
+        status: {type: string}
+        total_price: {type: number, format: float}
+        items_count: {type: integer}
+        created_at: {type: string, format: date-time}
+    OrderDetail:
+      type: object
+      properties:
+        id: {type: integer}
+        number: {type: string}
+        status: {type: string}
+        total_price: {type: number, format: float}
+        created_at: {type: string, format: date-time}
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              book_id: {type: integer}
+              title: {type: string}
+              author: {type: string}
+              cover_image_url: {type: string, nullable: true}
+              quantity: {type: integer}
+              unit_price: {type: number, format: float}
+    PlaygroundExecuteResult:
+      type: object
+      properties:
+        success: {type: boolean}
+        stdout: {type: string}
+        stderr: {type: string}
+        duration_ms: {type: integer}
+    PlaygroundLintResult:
+      type: object
+      properties:
+        success: {type: boolean}
+        offenses:
+          type: array
+          items: {$ref: "#/components/schemas/PlaygroundOffense"}
+        error: {type: string, description: "Present only when success:false"}
+    PlaygroundOffense:
+      type: object
+      properties:
+        line: {type: integer}
+        column: {type: integer}
+        severity: {type: string}
+        message: {type: string}
+        cop_name: {type: string}
+    RegisterRequest:
+      type: object
+      required: [email, password, name]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, format: password, minLength: 6, maxLength: 128}
+        name: {type: string, minLength: 1, maxLength: 100}
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email: {type: string, format: email}
+        password: {type: string, format: password}
+    UpdateProfileRequest:
+      type: object
+      description: Both fields are optional — only the ones provided are applied.
+      properties:
+        name: {type: string, minLength: 1, maxLength: 100}
+        password: {type: string, format: password, minLength: 6, maxLength: 128}
+    ForgotPasswordRequest:
+      type: object
+      required: [email]
+      properties:
+        email: {type: string, format: email}
+    ForgotPasswordResponse:
+      type: object
+      properties:
+        success: {type: boolean}
+        email: {type: string, format: email, nullable: true}
+        sent:
+          {
+            type: boolean,
+            nullable: true,
+            description: "Always false — SMTP is not configured",
+          }
+        devCode:
+          {
+            type: string,
+            nullable: true,
+            description: "Recovery code (instead of an email)",
+          }
+        message:
+          {
+            type: string,
+            nullable: true,
+            description: "Present only when success:false",
+          }
+    ResetPasswordRequest:
+      type: object
+      required: [email, code, newPassword]
+      properties:
+        email: {type: string, format: email}
+        code: {type: string}
+        newPassword:
+          {type: string, format: password, minLength: 6, maxLength: 128}
+    UserDto:
+      type: object
+      properties:
+        username:
+          {
+            type: string,
+            format: email,
+            description: "Email — the primary identifier",
+          }
+        nickname: {type: string, description: "Display name"}
+        role: {type: string, enum: [user, admin]}
+    AuthResponse:
+      type: object
+      properties:
+        success: {type: boolean}
+        user: {allOf: [{$ref: "#/components/schemas/UserDto"}], nullable: true}
+        message:
+          {
+            type: string,
+            nullable: true,
+            description: "Error code, present only when success:false",
+          }
