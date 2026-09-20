@@ -26,6 +26,10 @@ the deployed storefront running in real mode (`VITE_USE_MOCK=false`) against
 this backend and its Neon database. It shows data whenever this backend is
 running and reachable.
 
+**Docker image:** [`ghcr.io/vscrm/booknest-backend`](https://github.com/VSCRM/BookNest_backend/pkgs/container/booknest-backend) —
+the combined Rails + auth-service image, published on every release
+(see [Releases & Docker Image](#-releases--docker-image)).
+
 **API docs (once the stack is running):**
 [Swagger UI — http://localhost:8080/api](http://localhost:8080/api) ·
 [raw OpenAPI spec — http://localhost:8080/openapi.yaml](http://localhost:8080/openapi.yaml)
@@ -76,6 +80,11 @@ notifications, fraud detection, …) that wants to react to them later.
     - [Rails (`BookNest/backend`)](#rails-booknestbackend-1)
   - [🏗️ Project Structure](#️-project-structure)
   - [☁️ Deployment](#️-deployment)
+  - [📦 Releases \& Docker Image](#-releases--docker-image)
+    - [Automatic image publishing — `.github/workflows/docker-publish.yml`](#automatic-image-publishing--githubworkflowsdocker-publishyml)
+    - [Offline release assets — `pack-release.sh`](#offline-release-assets--pack-releasesh)
+    - [Cutting a release](#cutting-a-release)
+    - [Running the published image](#running-the-published-image)
   - [📄 License](#-license)
 
 ---
@@ -546,6 +555,10 @@ A plain `docker compose up --build` works too, but it also starts the optional
 `auth_postgres` container — unused when `DB_HOST` points at Neon, and it would
 occupy host port `DB_PORT` for nothing.
 
+> **Prefer not to build locally?** Every release publishes a ready-made image to
+> `ghcr.io/vscrm/booknest-backend` — see
+> [Releases & Docker Image](#-releases--docker-image).
+
 On the first start the logs show Rails creating and seeding the shop tables
 and `auth-service` creating `users` in Neon; later starts just reconnect.
 
@@ -705,13 +718,17 @@ adding request/model specs are welcome.
 ## 🏗️ Project Structure
 
 Every file actually present in the repository (generated/build output —
-`tmp/`, `log*/`, `storage/`, `.idea/`, `target/`, `node_modules/`, uploaded
+`tmp/`, `log*/`, `storage/`, `.idea/`, `target/`, `node_modules/`, `release-assets/`, uploaded
 cover images — is left out, as those aren't source), folders first then
 files, sorted alphabetically at each level — the same order a file explorer
 would show.
 
 ```
-BookNest-Backend/
+BookNest_backend/
+├── .github/
+│   └── workflows/
+│       └── docker-publish.yml                                                            # Builds & publishes the Docker image to ghcr.io when a release is published
+│
 ├── auth-service/                                                                         # Spring Boot authentication service
 │   ├── src/
 │   │   ├── main/
@@ -906,6 +923,7 @@ BookNest-Backend/
 ├── .gitignore
 ├── docker-compose.yml                                                                    # Combined stack: Kafka + backend (+ optional local Postgres)
 ├── LICENSE                                                                               # MIT license
+├── pack-release.sh                                                                       # Builds the release assets: source archive, Docker image archive, checksums
 └── README.md
 ```
 
@@ -926,6 +944,8 @@ container needs any care:
   in front of ports `8080` and `9000` when it should be reachable from the
   internet, terminate TLS there, and set `COOKIE_SECURE=true`. The container
   keeps no critical state of its own, so it can be rebuilt or moved freely.
+  Instead of building it yourself you can pull the prebuilt image from
+  `ghcr.io` — see [Releases & Docker Image](#-releases--docker-image).
 - **Database — Neon.** Every persistent record lives in the Neon project
   (`booknest_auth` and `booknest_shop`), which is managed, backed by Neon's own
   storage, and reachable from wherever the container runs. The only local
@@ -951,6 +971,100 @@ A few things to check before going live:
 - **Schema management.** Rails tables are managed by migrations (`db:prepare`
   on every start). Switch `auth-service` from `ddl-auto: update` to a real
   migration tool before relying on it long term.
+
+---
+
+## 📦 Releases & Docker Image
+
+Every release is cut from a git tag (`v1.0`, `v1.1`, …) and comes in two forms: a
+ready-to-run **Docker image** published to the GitHub Container Registry, and —
+optionally — offline **release assets** (a source archive, an image archive and
+checksums) attached to the GitHub Release page. Two files in this repository take
+care of it: `.github/workflows/docker-publish.yml` and `pack-release.sh`.
+
+### Automatic image publishing — `.github/workflows/docker-publish.yml`
+
+A GitHub Actions workflow runs whenever a GitHub Release is **published**. It checks
+out the tagged commit, builds the combined image from `combined/Dockerfile`, and
+pushes it to `ghcr.io/vscrm/booknest-backend` under two tags: the release tag
+(for example `v1.0`) and `latest`. It authenticates with the built-in
+`GITHUB_TOKEN`, so there are no secrets to configure, and it builds from a clean
+checkout, so a local `.env` can never end up inside the image. Build layers are
+cached between runs to keep repeat releases fast.
+
+Two one-time settings on GitHub: after the first publish, open the package
+(github.com/VSCRM → **Packages → booknest-backend → Package settings**) and change
+its visibility to **Public**, otherwise `docker pull` will ask for a login. If the
+package was pushed manually before, also add this repository under **Manage Actions
+access** with the **Write** role.
+
+### Offline release assets — `pack-release.sh`
+
+The script builds everything worth attaching to a release page in one go. Run it
+from the repository root on Linux or macOS (on Windows use Git Bash or WSL) with
+Docker running:
+
+```bash
+chmod +x pack-release.sh     # once
+./pack-release.sh 1.0
+
+# Building on Apple Silicon for a regular Linux server?
+PLATFORM=linux/amd64 ./pack-release.sh 1.0
+```
+
+It writes three files to `release-assets/` (add that folder to `.gitignore`):
+
+| File                                       | Purpose                                                                                                     |
+| ------------------------------------------ | ----------------------------------------------------------------------------------------------------------- |
+| `BookNest-backend-v1.0-source.tar.gz`      | Tracked source files at tag `v1.0` (or at `HEAD` if the tag doesn't exist yet) — no `.env`, no build output |
+| `booknest-backend-1.0-docker-image.tar.gz` | The combined image, restored with `docker load`                                                             |
+| `SHA256SUMS.txt`                           | Checksums for both archives (`sha256sum -c SHA256SUMS.txt` verifies them)                                   |
+
+Before saving the image the script checks that no `/rails/.env` was baked into it
+and stops with an error if one was. It also warns about uncommitted changes and
+about archives above GitHub's 2 GiB limit per release asset — in that case rely on
+the registry image instead of attaching the archive.
+
+### Cutting a release
+
+1. Commit and push everything to `main`, including the two files above.
+2. Optionally run `./pack-release.sh 1.0` to create the offline assets.
+3. On GitHub open **Releases → Draft a new release**, create the tag `v1.0` on
+   publish, paste the release notes, drop the files from `release-assets/` into
+   **Attach binaries**, and click **Publish release**.
+4. Watch the **Actions** tab. When the run turns green, the image is available as
+   `ghcr.io/vscrm/booknest-backend:v1.0`.
+
+### Running the published image
+
+```bash
+docker pull ghcr.io/vscrm/booknest-backend:v1.0
+
+docker run -d --name booknest_backend --restart unless-stopped \
+  --env-file .env \
+  -p 8080:3000 -p 9000:9000 \
+  --cap-add SYS_TIME \
+  ghcr.io/vscrm/booknest-backend:v1.0
+```
+
+A few details to keep in mind:
+
+- `.env` is the same file as in [Getting Started](#-getting-started--docker-recommended),
+  but with real values instead of placeholders. Docker's `--env-file` keeps quotes
+  literally and does not support trailing comments, so keep each line a plain
+  `KEY=value`.
+- `--cap-add SYS_TIME` lets the entrypoint sync the container's clock, exactly as in
+  `docker-compose.yml`.
+- Kafka is optional here: without a broker authentication keeps working, the events
+  just aren't published. With a broker add
+  `-e SPRING_KAFKA_BOOTSTRAP_SERVERS=host:9092`.
+- Uploaded book covers live on the container's filesystem; mount a folder to keep
+  them, e.g. `-v "$(pwd)/covers:/rails/public/uploads/covers"`.
+- To run from the offline archive instead, use `docker load -i
+booknest-backend-1.0-docker-image.tar.gz` and start the local image
+  `booknest-backend:1.0` with the same `docker run` options. (The script tags the
+  local image with the plain version number, while the registry tags follow the git
+  tag, including the leading `v`.)
 
 ---
 

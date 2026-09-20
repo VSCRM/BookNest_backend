@@ -45,3 +45,6 @@ desktop.ini
 
 ### Combined image build context leftovers ###
 combined/*.log
+
+### Build artifacts and release packages (source archives, Docker images, and checksums)
+release-assets/
