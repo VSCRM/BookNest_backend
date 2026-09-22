@@ -1,12 +1,11 @@
 # Seed data for the BookNest catalog.
 
-# Simple placeholder covers (placehold.co) in a warm paper palette so the
-# catalog looks complete without storing real image files in the repo.
-# Swap for real URLs / Active Storage later — trivial, since both Rails
-# and the frontend only ever read the cover_image_url field.
-def cover_url(title)
-  "https://placehold.co/400x600/EBD9B4/3A2F28?font=playfair-display&text=#{ERB::Util.url_encode(title)}"
-end
+# Seeded demo books intentionally ship with no cover_image_url. The
+# frontend falls back to its own bundled placeholder image whenever a book
+# has no cover, so the catalog still looks complete without us generating
+# or storing any image files here. Swap in real URLs / Active Storage later
+# — trivial, since both Rails and the frontend only ever read the
+# cover_image_url field.
 
 books = [
   # ── Harry Potter, all 7 parts, in order (J.K. Rowling) ──────────
@@ -143,7 +142,7 @@ books = [
 ]
 
 books.each do |attrs|
-  attrs[:cover_image_url] = cover_url(attrs[:title])
+  attrs[:cover_image_url] = nil
   # Always sync the full attrs on every run (not just cover_image_url) so
   # re-running `db:seed` after adding the *_en columns backfills the
   # translation on books that already existed in the database.
